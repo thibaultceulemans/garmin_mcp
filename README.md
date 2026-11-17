@@ -10,6 +10,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 - List recent activities with pagination support
 - Get detailed activity information
+- Upload recorded activities from FIT, GPX, or TCX files
 - Edit activities: name, type, description/notes, event type, perceived effort (RPE), feel, and strength exercise sets
 - Access health metrics (steps, heart rate, sleep, stress, respiration)
 - View body composition data
@@ -27,7 +28,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 This MCP server implements **110+ tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.2):
 
-- ✅ Activity Management (21 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets
+- ✅ Activity Management (24 tools) - includes file uploads and write tools for type, description, event type, perceived effort, feel, and exercise sets
 - ✅ Health & Wellness (34 tools) - includes custom lightweight summary tools
 - ✅ Training & Performance (13 tools) - includes CTL/ATL/TSB, HRV, VO2 max, and respiration trends
 - ✅ Workouts (8 tools)
@@ -50,6 +51,21 @@ This MCP server implements **110+ tools** covering ~90% of the [python-garmincon
 Each item in the `gear` array returned by `get_gear` includes a `notes` field
 containing the free-text Notes value shown in Garmin Connect. Gear without a
 Notes value returns `null`; all existing gear fields remain unchanged.
+
+### Activity File Uploads
+
+Call `upload_activity` with the path to a recorded FIT, GPX, or TCX file on
+the MCP server. The tool uploads it to the authenticated Garmin Connect account
+and returns Garmin's receipt with any activity IDs or failure details.
+
+```json
+{"activity_path": "/activities/morning-run.fit"}
+```
+
+For Docker or a remote server, mount or copy the file to a directory the server
+can read, then use the path as seen by the server. Relative paths start from
+the server's working directory. If the result is unconfirmed or
+`write_committed` is `"unknown"`, check Garmin Connect before retrying.
 
 ### Activity File Downloads
 
@@ -115,7 +131,7 @@ If you need any of these endpoints, please [open an issue](https://github.com/Ta
 
 ## Tool Filtering
 
-This server registers 155 tools by default, which is a lot of context for an
+This server registers 158 tools by default, which is a lot of context for an
 LLM to carry in every session. You can expose only the tools you need with
 three optional environment variables:
 
@@ -136,7 +152,7 @@ stops the server at startup with the list of known profiles.
 |---|---:|---|
 | `minimal` | 20 | Recent activities with splits, daily stats, sleep, HRV, stress, body battery, training readiness and status |
 | `health` | 53 | Every health_wellness tool plus weight, body composition, blood pressure, hydration, women's health, fitness age, HRV and respiration trends |
-| `activities` | 41 | Activity list, detail, splits and edits; FIT analysis and power curve; gear; courses |
+| `activities` | 42 | Activity list, detail, splits, edits and file uploads; FIT analysis and power curve; gear; courses |
 | `workouts` | 26 | Workout library, upload, schedule and delete; the high-level builders; the calendar |
 | `training` | 38 | Training status, load, effect, VO2max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, personal records, race predictions, goals, badges |
 | `nutrition` | 23 | Food log, custom foods, daily nutrition settings, hydration, energy balance |

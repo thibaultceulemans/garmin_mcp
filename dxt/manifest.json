@@ -680,6 +680,10 @@
       "description": "Update an existing custom food in the user's Garmin nutrition library"
     },
     {
+      "name": "upload_activity",
+      "description": "Upload a recorded FIT, GPX, or TCX activity to Garmin Connect."
+    },
+    {
       "name": "upload_course",
       "description": "Upload a GPX file as a Garmin Connect Course."
     },

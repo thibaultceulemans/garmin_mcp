@@ -35,6 +35,7 @@ ADDITIVE_TOOLS = frozenset(
         "schedule_workouts",
         "set_blood_pressure",
         "set_fit_download_dir",
+        "upload_activity",
         "upload_course",
         "upload_workout",
         "upload_workouts",

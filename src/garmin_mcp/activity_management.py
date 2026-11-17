@@ -3,7 +3,9 @@ Activity Management functions for Garmin Connect MCP Server
 """
 import json
 import datetime
+import stat
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from garmin_mcp.write_errors import WriteTracker
@@ -14,6 +16,7 @@ from garmin_mcp.write_errors import WriteTracker
 # splits API passes the wrapped value through unchanged.
 _UINT32_DISTANCE_WRAP_M = 2**32 / 100
 _MAX_WRAPPED_NEGATIVE_M = 1000.0
+_ACTIVITY_UPLOAD_EXTENSIONS = {".fit", ".gpx", ".tcx"}
 
 
 def sanitize_lap_distance(value):
@@ -1180,6 +1183,49 @@ def register_tools(app):
                 "success": True,
                 "activity": result,
             }, indent=2)
+        except Exception as e:
+            return tracker.error(e)
+
+    @app.tool()
+    async def upload_activity(activity_path: str) -> str:
+        """Upload a recorded FIT, GPX, or TCX activity to Garmin Connect.
+
+        Returns Garmin's upload receipt, including any activity IDs or failure
+        details. If the result is unconfirmed, check Garmin Connect before retrying.
+
+        Args:
+            activity_path: Path to a file on the MCP server. Supports ~ and paths
+                relative to the server's working directory.
+        """
+        tracker = WriteTracker("upload_activity", "Error uploading activity")
+        try:
+            if not activity_path.strip():
+                raise ValueError("activity_path is required")
+
+            path = Path(activity_path).expanduser()
+            if path.suffix.lower() not in _ACTIVITY_UPLOAD_EXTENSIONS:
+                raise ValueError("activity_path must end in .fit, .gpx, or .tcx")
+
+            path = path.resolve(strict=True)
+            if path.suffix.lower() not in _ACTIVITY_UPLOAD_EXTENSIONS:
+                raise ValueError("The resolved activity file must end in .fit, .gpx, or .tcx")
+
+            file_stat = path.stat()
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise ValueError("activity_path must point to a regular file")
+            if file_stat.st_size == 0:
+                raise ValueError("The activity file is empty")
+
+            upload = garmin_client.upload_activity
+            tracker.sending()
+            result = upload(str(path))
+            if result is None or (isinstance(result, (dict, list, str)) and not result):
+                return json.dumps({
+                    "status": "unconfirmed",
+                    "write_committed": "unknown",
+                    "message": "Garmin did not return an upload receipt. Check Garmin Connect before retrying.",
+                }, indent=2)
+            return json.dumps(result, indent=2)
         except Exception as e:
             return tracker.error(e)
 

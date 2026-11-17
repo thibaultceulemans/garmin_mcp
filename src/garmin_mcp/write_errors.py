@@ -39,19 +39,19 @@ _MAX_BODY_CHARS = 500
 _API_ERROR_RE = re.compile(r"API Error (\d{3})(?: - (.*))?", re.DOTALL)
 
 
+def _exception_chain(exc):
+    """Iterate the exception and its explicit causes without cycling."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__
+
+
 def _upstream(exc):
     """Return (status, body) parsed from a garminconnect error, or (None, None)."""
-    # The proxy chains its actionable message from the original exception.
-    # Prefer the innermost status-bearing cause so our hint is never mistaken
-    # for Garmin's response body. Guard against malformed cyclic chains.
-    chain = []
-    seen = set()
-    current = exc
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        chain.append(current)
-        current = current.__cause__
-    for current in reversed(chain):
+    # Prefer the original Garmin error over the message with the proxy's hint.
+    for current in reversed(list(_exception_chain(exc))):
         match = _API_ERROR_RE.search(str(current))
         if match:
             body = (match.group(2) or "").strip()[:_MAX_BODY_CHARS]
@@ -119,8 +119,18 @@ class WriteTracker:
                 # A 5xx (e.g. a gateway timeout) can come back after Garmin's
                 # backend already applied the write.
                 return "garmin_request", "unknown"
-            # Garmin answered with a 4xx: the write was rejected.
-            return "garmin_request", False
+            if status is not None:
+                # Garmin rejected the write, or the failure preceded the write.
+                return "garmin_request", False
+            # garminconnect 0.3.2's uploader catches OSError, which also covers
+            # requests exceptions. Use the cause to distinguish a failed
+            # connection from a timeout after the request was sent.
+            for cause in _exception_chain(exc):
+                if isinstance(cause, requests.exceptions.RequestException):
+                    exc = cause
+                    break
+            else:
+                return "garmin_request", False
         if isinstance(exc, requests.exceptions.JSONDecodeError):
             # Garmin answered 2xx but the body wasn't JSON. Checked before
             # RequestException, which JSONDecodeError also subclasses.

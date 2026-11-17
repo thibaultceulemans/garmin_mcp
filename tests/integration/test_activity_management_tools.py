@@ -1353,6 +1353,123 @@ async def test_create_manual_activity_reports_committed_write_if_response_cannot
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["run.fit", "run.gpx", "run.tcx", "run.FIT"])
+async def test_upload_activity_returns_garmin_receipt(
+    app_with_activity_management, mock_garmin_client, tmp_path, monkeypatch, filename,
+):
+    path = tmp_path / filename
+    path.write_bytes(b"activity file")
+    monkeypatch.chdir(tmp_path)
+    receipt = {
+        "detailedImportResult": {
+            "successes": [{"internalId": 12345678901}],
+            "failures": [],
+        }
+    }
+    mock_garmin_client.upload_activity.return_value = receipt
+
+    result = await app_with_activity_management.call_tool(
+        "upload_activity", {"activity_path": filename},
+    )
+
+    assert json.loads(result[0][0].text) == receipt
+    mock_garmin_client.upload_activity.assert_called_once_with(str(path.resolve()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename, error", [
+    ("  ", "activity_path is required"),
+    ("missing.fit", "FileNotFoundError"),
+    ("folder.gpx", "regular file"),
+    ("empty.tcx", "activity file is empty"),
+    ("other.csv", "activity_path must end in"),
+    ("link.fit", "resolved activity file must end in"),
+])
+async def test_upload_activity_rejects_invalid_paths(
+    app_with_activity_management, mock_garmin_client, tmp_path, monkeypatch, filename, error,
+):
+    (tmp_path / "folder.gpx").mkdir()
+    (tmp_path / "empty.tcx").touch()
+    (tmp_path / "other.csv").write_text("unsupported")
+    (tmp_path / "link.fit").symlink_to("other.csv")
+    monkeypatch.chdir(tmp_path)
+
+    result = await app_with_activity_management.call_tool(
+        "upload_activity", {"activity_path": filename},
+    )
+
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "error"
+    assert data["write_committed"] is False
+    assert error == data["error_type"] or error in data["message"]
+    mock_garmin_client.upload_activity.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("receipt", [None, {}])
+async def test_upload_activity_without_receipt_is_unconfirmed(
+    app_with_activity_management, mock_garmin_client, tmp_path, receipt,
+):
+    path = tmp_path / "ride.fit"
+    path.write_bytes(b"activity file")
+    mock_garmin_client.upload_activity.return_value = receipt
+
+    result = await app_with_activity_management.call_tool(
+        "upload_activity", {"activity_path": str(path)},
+    )
+
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "unconfirmed"
+    assert data["write_committed"] == "unknown"
+    assert "Check Garmin Connect before retrying" in data["message"]
+    mock_garmin_client.upload_activity.assert_called_once_with(str(path.resolve()))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure, upstream_status, committed", [
+    ("duplicate", 409, False),
+    ("server_error", 503, "unknown"),
+    ("wrapped_read_timeout", None, "unknown"),
+    ("wrapped_connect_timeout", None, False),
+])
+async def test_upload_activity_reports_write_errors(
+    app_with_activity_management, mock_garmin_client, tmp_path, failure,
+    upstream_status, committed,
+):
+    import requests
+    from garminconnect import GarminConnectConnectionError
+
+    path = tmp_path / "ride.fit"
+    path.write_bytes(b"activity file")
+
+    def fail_upload(_path):
+        if failure == "duplicate":
+            raise GarminConnectConnectionError("API Error 409 - Activity already exists")
+        if failure == "server_error":
+            raise GarminConnectConnectionError("API Error 503 - Server unavailable")
+        cause = {
+            "wrapped_read_timeout": requests.exceptions.ReadTimeout("read timed out"),
+            "wrapped_connect_timeout": requests.exceptions.ConnectTimeout("connection timed out"),
+        }[failure]
+        # The uploader wraps requests errors because RequestException is an OSError.
+        raise GarminConnectConnectionError(f"Failed to read file {_path}: {cause}") from cause
+
+    mock_garmin_client.upload_activity.side_effect = fail_upload
+    result = await app_with_activity_management.call_tool(
+        "upload_activity", {"activity_path": str(path)},
+    )
+
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "error"
+    assert data["stage"] == "garmin_request"
+    assert data["upstream_status"] == upstream_status
+    assert data["write_committed"] == committed
+    if committed == "unknown":
+        assert "before retrying" in data["hint"]
+    mock_garmin_client.upload_activity.assert_called_once_with(str(path.resolve()))
+
+
+@pytest.mark.asyncio
 async def test_get_activity_splits_wrapped_lap_distance_is_nulled(app_with_activity_management, mock_garmin_client):
     """Garmin's splits API passes a wrapped negative lap distance through; null and flag it.
 
